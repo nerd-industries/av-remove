@@ -159,6 +159,12 @@ $SilentSwitch = @{
     'AVG'     = '/S'
     'Avast'   = '/S'
 }
+# Per-component silent switches, keyed by a DisplayName substring. These win
+# over the per-vendor table (e.g. McAfee WebAdvisor is a separate NSIS app).
+$SilentByName = @{
+    'WebAdvisor'          = '/S'   # McAfee WebAdvisor (NSIS)
+    'Security Scan Plus'  = '/S'   # McAfee Security Scan Plus (NSIS)
+}
 
 # Return @(exe, args) for a silent uninstall, or $null if there is no clean
 # unattended path (the caller then flags it for the tech).
@@ -169,6 +175,12 @@ function Get-SilentCommand($p) {
     if ($u -match 'msiexec' -and $u -match '(\{[0-9A-Fa-f-]{36}\})') {
         return , @('msiexec.exe', "/x $($Matches[1]) /qn /norestart")
     }
+    foreach ($k in $SilentByName.Keys) {
+        if ($p.Name -match [regex]::Escape($k)) {
+            $parts = Split-Command $u
+            return , @($parts[0], ($parts[1] + ' ' + $SilentByName[$k]).Trim())
+        }
+    }
     if ($SilentSwitch.ContainsKey($p.Vendor)) {
         $parts = Split-Command $u
         return , @($parts[0], ($parts[1] + ' ' + $SilentSwitch[$p.Vendor]).Trim())
@@ -178,15 +190,29 @@ function Get-SilentCommand($p) {
 
 function Invoke-Uninstall($p) {
     $cmd = Get-SilentCommand $p
+    $assisted = $false
     if (-not $cmd) {
-        Write-Log ("no unattended uninstall for '{0}' - finish it with the vendor's removal tool." -f $p.Name) 'WARN'
-        return 'manual'
+        # No documented silent path. If a tech is watching, run the vendor's own
+        # uninstaller with its window visible so they can click through. From the
+        # RMM (no desktop) a UI uninstaller would just hang, so flag it instead.
+        if ($script:Interactive -and $p.Uninst) {
+            $cmd = Split-Command $p.Uninst
+            $assisted = $true
+        } else {
+            Write-Log ("no unattended uninstall for '{0}' - finish it with the vendor's removal tool." -f $p.Name) 'WARN'
+            return 'manual'
+        }
     }
-    Write-Log ("Removing: {0} {1}" -f $p.Name, $p.Version) 'STEP'
+    if ($assisted) {
+        Write-Log ("Removing: {0} {1}  (vendor uninstaller - complete any window it opens)" -f $p.Name, $p.Version) 'STEP'
+    } else {
+        Write-Log ("Removing: {0} {1}" -f $p.Name, $p.Version) 'STEP'
+    }
     Write-Log ("   {0} {1}" -f $cmd[0], $cmd[1])
     try {
-        $proc = if ($cmd[1]) { Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1] -PassThru -WindowStyle Hidden }
-                else         { Start-Process -FilePath $cmd[0] -PassThru -WindowStyle Hidden }
+        $style = if ($assisted) { 'Normal' } else { 'Hidden' }
+        $proc = if ($cmd[1]) { Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1] -PassThru -WindowStyle $style }
+                else         { Start-Process -FilePath $cmd[0] -PassThru -WindowStyle $style }
         if (-not $proc.WaitForExit($UninstallTimeoutMin * 60 * 1000)) {
             Write-Log ("   still running after {0} min - moving on." -f $UninstallTimeoutMin) 'WARN'
             return 'timeout'

@@ -35,8 +35,11 @@ Also available in the menu: `irm toolkit.nerdyneighbor.net | iex`.
    - a standard **MSI silent uninstall** (`msiexec /x {GUID} /qn /norestart`) for MSI-based products;
    - a small set of **documented unattended switches** (Avira `/remsilentnoreboot`, TotalAV/AVG/Avast `/S`).
 
-   Anything with no clean unattended path is **listed for the tech** to finish with
-   the vendor's removal tool - it is never forced.
+   If there's no documented silent path, behavior depends on who's running it:
+   when a **tech is at the keyboard**, it launches the vendor's own uninstaller
+   with its window visible so the tech clicks through; from the **RMM (SYSTEM)**
+   it just lists it, since a UI uninstaller would hang unattended. Either way,
+   anything it can't finish is reported so it can be cleared with the vendor tool.
 3. **Confirms Defender** with `Get-MpComputerStatus` and refreshes its
    definitions once it's active.
 
